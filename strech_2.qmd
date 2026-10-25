@@ -1,0 +1,152 @@
+---
+jupyter: python3
+---
+
+```{python}
+import polars as pl
+import requests
+from lets_plot import *
+LetsPlot.setup_html(isolated_frame=True)
+
+url = "https://github.com/byuidatascience/data4missing/raw/master/data-raw/flights_missing/flights_missing.json"
+df = pl.read_json(requests.get(url).content)
+```
+
+```{python}
+df.head()
+```
+
+```{python}
+
+df.shape
+```
+
+```{python}
+df.schema
+```
+
+```{python}
+
+df.describe()
+# The problem is num_of_delays_carrier is str "1500+" 
+# and num_of_delays_late_aircraft has the number -999. 
+```
+
+```{python}
+df.filter(pl.col("num_of_delays_late_aircraft") == -999).height
+```
+
+```{python}
+(
+    df
+    .filter(~pl.col("num_of_delays_carrier").str.contains(r"^\d+$"))
+    ["num_of_delays_carrier"]
+    .value_counts()
+)
+```
+
+```{python}
+# "1500+" means a min of 1500. I will use it as a minimal value
+# -999 means missing. I will consider it as null
+# 73 rows had "1500+" in num_of_delays_carrier, so I changed them to 1500.
+# 40 rows had -999 in num_of_delays_late_aircraft, so I filled them with the mean.
+
+df_clean = (
+    df
+    .with_columns(
+        pl.col("num_of_delays_carrier")
+          .replace("1500+", "1500")
+          .cast(pl.Int64),
+        pl.col("num_of_delays_late_aircraft")
+          .replace(-999, None),
+    )
+    .with_columns(
+        pl.col("num_of_delays_late_aircraft")
+          .fill_null(pl.col("num_of_delays_late_aircraft").mean().round(0))
+          .cast(pl.Int64),
+    )
+)
+```
+
+```{python}
+wide = df_clean.select(
+(pl.col("num_of_delays_carrier").sum() / pl.col("num_of_flights_total").sum()).alias("Carrier"),
+(pl.col("num_of_delays_security").sum() / pl.col("num_of_flights_total").sum()).alias("Security"),
+(pl.col("num_of_delays_late_aircraft").sum() / pl.col("num_of_flights_total").sum()).alias("Late Aircraft"),
+)
+long_df = (
+    wide
+    .unpivot(
+        on=["Carrier", "Security", "Late Aircraft"],
+        variable_name="delay_type",
+        value_name="proportion",)
+    .with_columns((pl.col("proportion") * 100).round(2).alias("percent"))
+    .sort("proportion", descending=True)
+    
+)
+```
+
+```{python}
+long_df.select("delay_type", "percent")
+```
+
+```{python}
+(
+    ggplot(long_df, aes(x="delay_type", y="percent"))
+    + geom_bar(stat="identity")
+    + scale_x_discrete(limits=long_df["delay_type"].to_list())
+    + labs(
+        title="Late Aircraft is the biggest reason for delays, followed by Carrier; Security is negligible",
+        x="Delay type",
+        y="% of flights delayed",
+    )
+)
+```
+
+Late Aircraft was the biggest cause of delays 6.68%, followed by carrier 4.55%. Security is almost zero 0.03%.
+
+```{python}
+by_airport = (
+    df_clean
+    .group_by("airport_code")
+    .agg(
+        (pl.col("num_of_delays_carrier").sum() / pl.col("num_of_flights_total").sum()).alias("Carrier"),
+        (pl.col("num_of_delays_security").sum() / pl.col("num_of_flights_total").sum()).alias("Security"),
+        (pl.col("num_of_delays_late_aircraft").sum() / pl.col("num_of_flights_total").sum()).alias("Late Aircraft"),
+    )
+    .sort("airport_code")
+)
+
+long_airport = (
+    by_airport
+    .unpivot(
+        index="airport_code",
+        on=["Carrier", "Security", "Late Aircraft"],
+        variable_name="delay_type",
+        value_name="proportion",
+    )
+    .with_columns((pl.col("proportion") * 100).round(2).alias("percent"))
+)
+
+(
+    ggplot(long_airport, aes(x="airport_code", y="percent", fill="delay_type"))
+    + geom_bar(stat="identity", position="dodge")
+    + labs(
+        title="Late Aircraft is the biggest problem for all airports",
+        x="Airport",
+        y="% of flights delayed",
+        fill="Delay type",
+    )
+)
+```
+
+```{python}
+long_airport.pivot(
+    on="delay_type",
+    index="airport_code",
+    values="percent",
+)
+```
+
+Late Aircraft is the biggest problem for all airports. Security is minimal, under 0.1%.
+

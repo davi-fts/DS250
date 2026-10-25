@@ -1,0 +1,143 @@
+---
+title: "Client Report - Missing values"
+subtitle: "Unit 2 Task 3"
+author: "[Davi Freitas]"
+format:
+  html:
+    self-contained: true
+    page-layout: full
+    title-block-banner: true
+    toc: true
+    toc-depth: 3
+    toc-location: body
+    number-sections: false
+    html-math-method: katex
+    code-fold: true
+    code-summary: "Show the code"
+    code-overflow: wrap
+    code-copy: hover
+    code-tools:
+        source: false
+        toggle: true
+        caption: See code
+execute: 
+  warning: false
+    
+---
+
+```{python}
+import polars as pl
+import requests #new for reading in JSON
+import io       #new for reading in JSON
+import numpy as np
+from lets_plot import *
+import polars.selectors as cs
+
+LetsPlot.setup_html(isolated_frame=True)
+```
+
+
+```{python}
+url = "https://raw.githubusercontent.com/byuidatascience/data4missing/master/data-raw/flights_missing/flights_missing.json"
+response = requests.get(url)
+df = pl.read_json(io.BytesIO(response.content))
+```
+
+## QUESTION 1
+
+1. __Convert values to missing__ 
+
+Start with a fresh copy of the flights dataset by reading it in from the link provided above (as opposed to starting with the dataset you ended with in the last assignment). Identify data values that are problematic, non-sense or impossible and change them to be missing. 
+
+In your report include one record example (one row) from your clean data, in the raw JSON format. Your example should display at least one missing value so that we can verify it was done correctly. (Note: JSON will convert NaN's to null).
+
+ Describe your process for finding values that needed to be changed, and how you changed them.
+
+First, I saw that num_of_delays_carrier returned as a string and it should be an int. year, minutes_delayed_carrier, and minutes_delayed_nas returned null values.  num_of_delays_late_aircraft and minutes_delayed_nas returned the min value of -999, which is impossible. The min airport_name returned "", and the max month returned n/a. All of these need to be replaced.
+
+In order to replace them I will create new columns. I will first replace airport_name and month invalid data for None. Then, I will convert the text column into numbers and then correct the data. Last, I will fix the -999 values.
+_AI use reflection_
+**Link** to the original chat:
+**The Process** How exactly did you use the tool?
+**The Impact**  How did using AI impact your learning?
+
+```{python}
+# Include and execute your code here
+df.schema
+# num_of_delays_carrier returned as a string and it should be an int
+
+df.null_count()
+# year, minutes_delayed_carrier, and minutes_delayed_nas returned null values 
+
+df.describe()
+# num_of_delays_late_aircraft and minutes_delayed_nas returned the min value of -999, which is impossible. min airport_name returned "", max month returned n/a. All of these need to be replaced
+
+# In order to replace them I will create new columns 
+
+flights_without_invalid_data = df.with_columns(
+
+  # I will first replace airport_name and month invalid data for None
+  pl.col("airport_name").replace({"": None}),
+  pl.col("month").replace({"n/a": None}),
+
+  # I will convert the text column into numbers and then correct the data
+  pl.col("num_of_delays_carrier").cast(pl.Float64, strict=False),
+
+  # Last I will fix the -999 values
+  pl.when(pl.col("num_of_delays_late_aircraft") == -999).then(None).otherwise(pl.col("num_of_delays_late_aircraft")).alias("num_of_delays_late_aircraft"),
+      
+    pl.when(pl.col("minutes_delayed_nas") == -999).then(None).otherwise(pl.col("minutes_delayed_nas")).alias("minutes_delayed_nas")
+)
+
+# JSON line
+
+json_line_with_null = flights_without_invalid_data.filter(pl.col("month").is_null() | pl.col("airport_name").is_null() | pl.col("minutes_delayed_nas").is_null()).head(1)
+
+print(json_line_with_null.write_json())
+
+
+```
+
+## QUESTION 2
+
+2. __Filling in missing data__ For all the "minutes_delayed" columns, fill in any missing values with the median of that column. For the "num_of" columns, fill in missing values with that column's mean.
+
+_Nothing to write/report for this question_
+
+_AI use reflection_
+**Link** to the original chat:
+**The Process** How exactly did you use the tool?
+**The Impact**  How did using AI impact your learning?
+
+```{python}
+# Include and execute your code here
+flights_with_null_filled = flights_without_invalid_data.with_columns(cs.contains("minutes_delayed").fill_null(cs.contains("minutes_delayed").median()), cs.contains("num_of").fill_null(cs.contains("num_of").mean()))
+
+```
+
+## QUESTION 3
+ 
+3. __Display a histogram for num_of_delays_carrier and for minutes_delayed_nas (2 separate histograms in total). Comment on the shape of each one. Also report the mean of each of these columns now that missing values have been filled in.__
+
+I need to understand this better but from what I see, 
+
+_AI use reflection_
+**Link** to the original chat:
+**The Process** How exactly did you use the tool?
+**The Impact**  How did using AI impact your learning?
+
+```{python}
+# Include and execute your code here
+
+carrier_mean = flights_with_null_filled.select(pl.col("num_of_delays_carrier").mean()).item()
+nas_mean = flights_with_null_filled.select(pl.col("minutes_delayed_nas").mean()).item()
+
+print(f"Mean of num_of_delays_carrier: {carrier_mean}")
+print(f"Mean of minutes_delayed_nas: {nas_mean}")
+
+hist_carrier = ggplot(flights_with_null_filled, aes(x="num_of_delays_carrier")) + geom_histogram() + ggtitle("Histogram of Carrier Delays")
+hist_carrier.show()
+
+hist_nas = ggplot(flights_with_null_filled, aes(x="minutes_delayed_nas")) + geom_histogram() + ggtitle("Histogram of NAS Delay Minutes")
+hist_nas.show()
+```
